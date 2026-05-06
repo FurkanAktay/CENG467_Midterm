@@ -1,0 +1,37 @@
+[
+  {
+    "sentence": "we root for ( clara and paul ) , even like them , though perhaps it 's an emotion closer to pity . ",
+    "true": 1,
+    "pred_bert": 0,
+    "pred_lstm": 0,
+    "pred_tfidf": 0
+  },
+  {
+    "sentence": "holden caulfield did it better . ",
+    "true": 0,
+    "pred_bert": 1,
+    "pred_lstm": 1,
+    "pred_tfidf": 1
+  },
+  {
+    "sentence": "a synthesis of cliches and absurdities that seems positively decadent in its cinematic flash and emptiness . ",
+    "true": 0,
+    "pred_bert": 1,
+    "pred_lstm": 0,
+    "pred_tfidf": 0
+  },
+  {
+    "sentence": "the script kicks in , and mr. hartley 's distended pace and foot-dragging rhythms follow . ",
+    "true": 0,
+    "pred_bert": 1,
+    "pred_lstm": 0,
+    "pred_tfidf": 0
+  },
+  {
+    "sentence": "though it 's become almost redundant to say so , major kudos go to leigh for actually casting people who look working-class . ",
+    "true": 1,
+    "pred_bert": 0,
+    "pred_lstm": 1,
+    "pred_tfidf": 1
+  }
+]
