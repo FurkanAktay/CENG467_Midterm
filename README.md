@@ -39,12 +39,11 @@ Each notebook is self-contained: it installs its own dependencies, downloads the
 ```
 CENG467_Midterm/
 ├── README.md
-├── notebooks/
-│   ├── Q1_Text_Classification.ipynb
-│   ├── Q2_Named_Entity_Recognition.ipynb
-│   ├── Q3_Text_Summarization.ipynb
-│   ├── Q4_Machine_Translation.ipynb
-│   └── Q5_Language_Modeling.ipynb
+├── Q1_Text_Classification.ipynb
+├── Q2_Named_Entity_Recognition.ipynb
+├── Q3_Text_Summarization.ipynb
+├── Q4_Machine_Translation.ipynb
+├── Q5_Language_Modeling.ipynb
 ├── results/                  # Output JSON/CSV per notebook
 └── reports/
     └── CENG467_Midterm_Report.pdf
