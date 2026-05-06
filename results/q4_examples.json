@@ -1,0 +1,20 @@
+[
+  {
+    "src": "A man in an orange hat starring at something.",
+    "reference": "Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.",
+    "seq2seq": "ein mann mit einem orangen hut auf etwas .",
+    "transformer": "Ein Mann in einem orangenen Hut, mit etwas."
+  },
+  {
+    "src": "A Boston Terrier is running on lush green grass in front of a white fence.",
+    "reference": "Ein Boston Terrier läuft über saftig-grünes Gras vor einem weißen Zaun.",
+    "seq2seq": "ein <unk> läuft auf dem <unk> vor einem weißen zaun .",
+    "transformer": "Ein Boston Terrier läuft auf üppig grünem Gras vor einem weißen Zaun."
+  },
+  {
+    "src": "A girl in karate uniform breaking a stick with a front kick.",
+    "reference": "Ein Mädchen in einem Karateanzug bricht ein Brett mit einem Tritt.",
+    "seq2seq": "ein mädchen gekleidetes mädchen macht einen einen mit mit einem fußtritt tritt .",
+    "transformer": "Ein Mädchen in Karate-Uniform bricht einen Stock mit einem Front-Kick."
+  }
+]
