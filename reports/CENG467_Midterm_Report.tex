@@ -1,0 +1,509 @@
+\documentclass[11pt,a4paper]{article}
+
+% ===== Packages =====
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{amsmath, amssymb}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{microtype}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{fancyhdr}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=blue,
+    urlcolor=blue,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{CENG 467 -- Take-Home Midterm}
+\lhead{Yusuf Furkan Aktay}
+\rfoot{\thepage}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+
+% ===== Title =====
+\title{\vspace{-1.5em}\textbf{CENG 467 -- Natural Language Understanding and Generation}\\[0.3em]
+\large Take-Home Midterm Examination Report}
+\author{Yusuf Furkan Aktay\\
+\small Department of Computer Engineering\\
+\small Izmir Institute of Technology}
+\date{April 2026}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+% ===== Abstract =====
+\begin{abstract}
+\noindent
+This report presents a comprehensive comparative study of five core NLP tasks: text classification, named entity recognition (NER), text summarization, machine translation, and language modeling. For each task, we implement and evaluate multiple representative model families -- spanning classical (TF-IDF, n-gram), neural (BiLSTM, LSTM-LM, Seq2Seq with attention), and transformer-based (DistilBERT, BART, opus-mt) approaches -- on standard benchmark datasets. All experiments are reproducible with a fixed random seed and were carried out on Google Colab Free's T4 GPU under realistic compute constraints. Across all five tasks, transformer-based contextual models consistently outperform classical and shallow neural baselines, but the magnitude of improvement and the metric-specific behavior (e.g., BLEU vs.\ METEOR vs.\ BERTScore) reveal nuanced trade-offs between fluency, factual fidelity, and computational cost. We complement quantitative results with detailed error and qualitative analysis to characterize each model's behavior and limitations.
+\end{abstract}
+
+\vspace{-0.6em}
+
+% ===== Section 1 =====
+\section{Introduction and Experimental Protocol}
+
+This take-home midterm covers five canonical tasks in Natural Language Understanding and Generation. Each task constitutes an independent experimental study, and all share a common reproducibility protocol described below.
+
+\subsection{Reproducibility}
+
+A single random seed (\texttt{SEED = 42}) is set across Python's \texttt{random}, NumPy, PyTorch (CPU and CUDA), and the HuggingFace \texttt{Trainer} interface. All deterministic operations are enabled where supported. Datasets are loaded from canonical mirrors (HuggingFace Datasets where available; otherwise from the original GitHub repositories), with fixed splits. The test set in every task is used \emph{only once} for final evaluation.
+
+\subsection{Compute Environment}
+
+All experiments were carried out on Google Colab's free tier with the following specification:
+\vspace{-0.4em}
+\begin{itemize}[noitemsep,leftmargin=1.4em]
+    \item Hardware: NVIDIA T4 GPU (15\,GB VRAM)
+    \item Software: Python 3.12, PyTorch 2.x, transformers 4.5x (current), datasets 3.x, scikit-learn 1.4
+\end{itemize}
+\vspace{-0.4em}
+
+The free-tier compute budget imposes practical constraints (runtime caps, limited parallel workers). We made several principled engineering decisions to remain within budget while preserving experimental validity:
+\vspace{-0.4em}
+\begin{itemize}[noitemsep,leftmargin=1.4em]
+    \item Where the exam allows subsets (Q3), we use a 100-article test sample.
+    \item Where deep neural training is required (Q1, Q2, Q4, Q5), we cap training corpora and epochs to fit within $\sim$10 minutes per task while preserving the qualitative trends reported in the literature.
+    \item For pre-trained models intended for inference comparison (Q3 BART, Q4 opus-mt), we use them \emph{without} further fine-tuning -- a standard practice in compute-aware comparative research.
+\end{itemize}
+\vspace{-0.4em}
+
+These decisions are documented per task. We emphasize that the \emph{relative} comparisons between models -- which is the core pedagogical objective of this exam -- remain valid under these constraints.
+
+\subsection{Repository}
+
+All notebooks, results files, and this report are publicly available at:\\
+\url{https://github.com/FurkanAktay/CENG467_Midterm}
+
+% ===========================================================
+% ===== Q1: Text Classification =====
+% ===========================================================
+\section{Q1: Representation Learning in Text Classification}
+
+\subsection{Problem Formulation and Dataset}
+
+We compare three representation paradigms -- \emph{sparse}, \emph{dense}, and \emph{contextual} -- on binary sentiment classification. The dataset is SST-2 (Stanford Sentiment Treebank, binary version) from the GLUE benchmark, comprising single-sentence movie reviews labeled positive/negative. Following standard GLUE evaluation practice (where the official test labels are private), we treat the GLUE \emph{validation} split as our held-out test set, and create a fresh 90/10 train/dev split from the original training set.
+
+\begin{table}[h!]
+\centering
+\small
+\caption{SST-2 dataset statistics (after our 90/10 split).}
+\begin{tabular}{lr}
+\toprule
+\textbf{Split} & \textbf{Examples}\\
+\midrule
+Train & 60{,}614\\
+Dev (held out from training) & 6{,}735\\
+Test (= GLUE validation) & 872\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Preprocessing and Tokenization}
+
+For the sparse classical model we compare two tokenization strategies:
+\vspace{-0.3em}
+\begin{enumerate}[noitemsep,leftmargin=1.4em]
+    \item \textbf{Simple}: lowercase + whitespace split.
+    \item \textbf{NLTK + stopword removal}: lowercase, regex-strip non-alphabetic characters, NLTK \texttt{word\_tokenize}, drop English stopwords and 1-character tokens.
+\end{enumerate}
+\vspace{-0.3em}
+
+The neural BiLSTM uses simple whitespace tokenization with a frequency-pruned vocabulary (min freq 2, top 20K words). DistilBERT uses its native WordPiece tokenizer (\texttt{distilbert-base-uncased}).
+
+\subsection{Models and Training}
+
+\textbf{TF-IDF + Logistic Regression.} TF-IDF features with unigrams and bigrams, max\_features=50{,}000, min\_df=2; logistic regression with $C=1.0$, max\_iter=1000.
+
+\textbf{BiLSTM.} 128-dim trainable embeddings, single-layer bidirectional LSTM with 128 hidden units, mean-pool over time, 0.5 dropout, linear classifier. Trained 5 epochs with Adam (lr=$10^{-3}$), batch size 64, max sequence length 50.
+
+\textbf{DistilBERT.} The pre-trained \texttt{distilbert-base-uncased} model is fine-tuned with a sequence classification head. Trained 2 epochs with AdamW (lr=$2\times10^{-5}$, weight decay 0.01), batch size 32, max sequence length 64.
+
+\subsection{Results}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{SST-2 test results across three representation paradigms.}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Accuracy} & \textbf{Macro-F1} & \textbf{Time (s)}\\
+\midrule
+TF-IDF + Logistic Regression (sparse)        & 0.8177 & 0.8161 & 14.1\\
+BiLSTM (dense)                                & 0.8050 & 0.8045 & 21.6\\
+\textbf{DistilBERT (contextual)}             & \textbf{0.9037} & \textbf{0.9035} & 667.7\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A short tokenization study showed simple whitespace tokenization slightly outperformed NLTK+stopword-removal for TF-IDF; the simple variant was retained as the final classical baseline.
+
+\subsection{Error Analysis}
+
+DistilBERT misclassified 84/872 ($\approx$9.6\%) of test examples. We inspected the first five errors and identified three recurring failure patterns:
+
+\textbf{(1) Concessive / contrastive constructions.} The example
+\textit{``we root for (clara and paul), even like them, though perhaps it's an emotion closer to pity.''}
+is labeled positive but classified negative by all three models. The clause flow shifts polarity multiple times (root for $\to$ like $\to$ pity), and shallow surface cues weight the negative-loaded final clause.
+
+\textbf{(2) Implicit comparison / sarcasm.} \textit{``holden caulfield did it better.''} -- gold label negative, all three models predict positive. The sentence is a sarcastic put-down (the current work is worse than \textit{Catcher in the Rye}), but contains no explicit negative lexical cue.
+
+\textbf{(3) Indirect or literary phrasing.} \textit{``the script kicks in, and mr.\ hartley's distended pace and foot-dragging rhythms follow.''} -- gold negative, BERT predicts positive. The negative meaning is carried by ``distended,'' ``foot-dragging,'' i.e., domain-specific cinematic critique vocabulary; these are likely under-represented in BERT's pretraining for the polarity task.
+
+These errors are characteristic of SST-2 and are well-documented in the literature on the limits of bag-of-words and even contextual classifiers for sentiment with figurative language.
+
+\subsection{Discussion}
+
+DistilBERT improves macro-F1 by $\sim$9 absolute points over both classical and shallow neural baselines, confirming the value of contextual representations. Interestingly, the simple TF-IDF baseline marginally outperforms BiLSTM here -- a finding consistent with the observation that on short, lexically-driven sentences (SST-2 averages $\sim$10 words), n-gram features can already capture most sentiment-bearing signal, and a small from-scratch BiLSTM does not have enough data or capacity to beat them. The cost is large: DistilBERT requires roughly 50$\times$ the training time of TF-IDF for $\approx$9-point F1 improvement -- a useful concrete data point for the cost-quality trade-off in production.
+
+% ===========================================================
+% ===== Q2: NER =====
+% ===========================================================
+\section{Q2: Named Entity Recognition}
+
+\subsection{Problem Formulation and Dataset}
+
+We use the CoNLL-2003 English NER benchmark, derived from Reuters newswire. Four entity types are annotated using the BIO scheme: \texttt{PER} (person), \texttt{LOC} (location), \texttt{ORG} (organization), and \texttt{MISC} (miscellaneous). Splits: 14{,}041 train / 3{,}250 dev / 3{,}453 test sentences.
+
+Owing to the deprecation of script-based dataset loaders in the latest \texttt{datasets} library, we obtain CoNLL-2003 from the \texttt{tomaarsen/conll2003} parquet mirror, which preserves the original tags and splits.
+
+\subsection{Models}
+
+\textbf{BiLSTM-CRF (hybrid).} A 100-dim trainable embedding layer, a bidirectional LSTM with 128 hidden units (each direction), 0.3 dropout, and a Conditional Random Field decoding layer (\texttt{pytorch-crf}). The CRF enforces BIO consistency via learned transition scores. Trained 5 epochs with Adam (lr=$10^{-3}$), batch size 32, max sequence length 80.
+
+\textbf{DistilBERT-NER (transformer).} Token classification head on top of \texttt{distilbert-base-uncased}. We follow the standard subword-alignment convention: only the first subword of each original word receives the gold tag, and continuation subwords receive the ignore-index $-100$. Owing to runtime constraints, training was performed on a 5{,}000-sentence subset of CoNLL-2003 (full training set has 14{,}041 sentences) for 2 epochs with AdamW (lr=$3\times10^{-5}$, weight decay 0.01), batch size 16, max sequence length 128. We discuss this choice further in Section~2.5.
+
+\subsection{Results}
+
+We use entity-level Precision, Recall, and F1 from \texttt{seqeval}, the standard library for CoNLL-style evaluation.
+
+\begin{table}[h!]
+\centering
+\small
+\caption{CoNLL-2003 test results.}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Time (s)}\\
+\midrule
+BiLSTM-CRF & 0.7411 & 0.5808 & 0.6512 & 240.5\\
+\textbf{DistilBERT-NER (5K subset)} & \textbf{0.8916} & \textbf{0.9014} & \textbf{0.8965} & 218.7\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Note: BiLSTM-CRF numbers correspond to the run that produced the saved \texttt{q2\_full.json}; absolute values may vary slightly across reruns due to GPU non-determinism.}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{DistilBERT-NER per-entity breakdown on the test set.}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Entity} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Support}\\
+\midrule
+LOC  & 0.8912 & 0.9335 & 0.9119 & 1668\\
+MISC & 0.7868 & 0.7991 & 0.7929 &  702\\
+ORG  & 0.8555 & 0.8627 & 0.8591 & 1661\\
+PER  & 0.9778 & 0.9524 & 0.9649 & 1617\\
+\midrule
+micro avg     & 0.8916 & 0.9014 & 0.8965 & 5648\\
+macro avg     & 0.8778 & 0.8869 & 0.8822 & 5648\\
+weighted avg  & 0.8925 & 0.9014 & 0.8968 & 5648\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Error Analysis}
+
+We inspected sentences where DistilBERT predictions differ from gold annotations. Three error categories dominate:
+
+\textbf{(1) Boundary errors with multi-token entities.} In the sentence
+\textit{``Cuttitta announced his retirement after the 1995 World Cup\dots''},
+the gold entity is \texttt{B-MISC I-MISC I-MISC} for ``1995 World Cup'' (a single MISC entity for the event). DistilBERT tags ``1995'' as \texttt{O} and starts the entity at ``World'', producing only ``World Cup''. This is a classical boundary error, particularly common when an entity is initiated by a numeric token.
+
+\textbf{(2) Domain shift / entity-type confusion.} CoNLL-2003 contains cricket scorecards with idiosyncratic format such as \textit{``Inzamamul Haq st Germon b Astle 2''}. Here ``Astle'' is a player name (PER), but DistilBERT tags it as \texttt{B-ORG} -- an \emph{entity-type confusion} driven by domain-specific token patterns the pre-training corpus rarely covers. The BiLSTM-CRF makes related but different mistakes (mistagging the entire scorecard as ORG), reflecting that neither model has good coverage of this micro-domain.
+
+\textbf{(3) Annotation ambiguity / world knowledge.} In \textit{``\dots CHINA IN SURPRISE DEFEAT''}, the gold label for ``CHINA'' is \texttt{B-PER} -- referring to a Chinese player whose nickname is the country -- whereas DistilBERT and BiLSTM both tag it as \texttt{B-LOC}. Resolving this requires sports-domain world knowledge that neither model possesses.
+
+\textbf{(4) MISC weakness.} The per-entity table shows MISC F1 is the lowest at 0.79, $\sim$15 points below PER. MISC is a notoriously loose category in CoNLL-2003 (covering nationalities, events, languages, titles), and this gap is consistent with all published benchmark results.
+
+\subsection{Discussion}
+
+DistilBERT-NER outperforms the BiLSTM-CRF baseline by $\sim$25 F1 points despite training on only 5{,}000 sentences. The advantage stems from contextual embeddings pre-trained on a large corpus: subword tokenization handles unseen surface forms (e.g., ``Inzamamul'' as multiple subwords whose contextual embeddings are still informative), and bidirectional attention captures longer-range dependencies than a single-layer BiLSTM can. The CRF layer in the BiLSTM model still adds value (it enforces BIO consistency), but the underlying token representations are simply too weak to compete.
+
+We emphasize that even with 5{,}000 sentences ($\sim$36\% of full training data), DistilBERT achieves F1=0.8965, which is within $\sim$2 points of the full-data result reported in literature ($\sim$0.91). This suggests strong sample efficiency from pre-training -- a finding with practical importance in low-resource NER settings.
+
+% ===========================================================
+% ===== Q3: Text Summarization =====
+% ===========================================================
+\section{Q3: Text Summarization}
+
+\subsection{Problem Formulation and Dataset}
+
+We compare \emph{extractive} and \emph{abstractive} summarization on the CNN/DailyMail v3.0.0 corpus, a benchmark of news articles paired with multi-sentence reference summaries (``highlights''). Following the exam's allowance for subsets (and to remain within Colab's runtime), we evaluate on a fixed 100-article test sample drawn with seed 42 from the full 11{,}490-article test split.
+
+\begin{table}[h!]
+\centering
+\small
+\caption{CNN/DailyMail test subset statistics.}
+\begin{tabular}{lr}
+\toprule
+\textbf{Statistic} & \textbf{Value}\\
+\midrule
+Number of articles      & 100\\
+Avg.\ article length (chars)   & $\sim$3{,}900\\
+Avg.\ reference length (chars) & $\sim$280\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Models}
+
+\textbf{LexRank (extractive).} LexRank builds a graph whose nodes are article sentences and whose edges are weighted by TF-IDF cosine similarity, then runs PageRank to identify the most central sentences. We extract the top-3 sentences per article (matching the typical 3-sentence reference structure of CNN/DM). We use the implementation from the \texttt{sumy} library.
+
+\textbf{BART-CNN (abstractive).} We use \texttt{facebook/bart-large-cnn}, a BART encoder-decoder already fine-tuned on CNN/DailyMail. Generation uses beam search with 4 beams, length penalty 2.0, min length 30, max length 130, and early stopping. \emph{No further fine-tuning is performed.}
+
+\subsection{Evaluation Metrics}
+
+We report a comprehensive metric suite covering n-gram overlap, alignment, and semantic similarity:
+\vspace{-0.3em}
+\begin{itemize}[noitemsep,leftmargin=1.4em]
+    \item \textbf{ROUGE-1, ROUGE-2, ROUGE-L} (\texttt{rouge\_score}, with stemming) -- standard summarization metrics measuring unigram, bigram, and longest-common-subsequence F-scores.
+    \item \textbf{BLEU} (\texttt{sacrebleu}, corpus-level) -- translation-style precision metric with brevity penalty.
+    \item \textbf{METEOR} (NLTK) -- alignment-based metric matching synonyms and stems.
+    \item \textbf{BERTScore-F1} (\texttt{bert-score}, \texttt{lang=en}) -- contextual semantic similarity using BERT embeddings.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Summarization results on a 100-article CNN/DailyMail test subset.}
+\begin{tabular}{lcccccccc}
+\toprule
+\textbf{Model} & \textbf{ROUGE-1} & \textbf{ROUGE-2} & \textbf{ROUGE-L} & \textbf{BLEU} & \textbf{METEOR} & \textbf{BERTScore-F1} & \textbf{Time (s)}\\
+\midrule
+LexRank (extractive)  & 0.3445 & 0.1239 & 0.2196 & 0.0856 & 0.3225 & 0.8624 & 8.8\\
+\textbf{BART-CNN (abstractive)} & \textbf{0.4316} & \textbf{0.2041} & \textbf{0.3022} & \textbf{0.1588} & \textbf{0.3892} & \textbf{0.8813} & 190.2\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+BART improves all six metrics; the largest absolute gains are on ROUGE-2 (+8.0 points) and BLEU (+7.3 points), reflecting BART's far stronger bigram and exact-phrase agreement with references. The smallest gain is on BERTScore-F1 (+1.9 points), suggesting that LexRank, despite extracting verbatim sentences, captures most of the \emph{semantic} content that BERT can detect.
+
+\subsection{Qualitative Analysis}
+
+We manually inspect three representative pairs (full transcripts in \texttt{results/q3\_examples.json}).
+
+\textbf{Example 1 -- factual hallucination by BART.} The article is by CNN's Dr.\ Sanjay Gupta on the medical-marijuana movement. The reference: \textit{``CNN's Dr.\ Sanjay Gupta says we should legalize medical marijuana now\dots''}. BART produced: \textit{``CNN's John Sutter says he sees signs of a medical marijuana revolution\dots Sutter: `Weed 3' is eyewitnesses to a revolution\dots''}. BART invents a non-existent author (``John Sutter'') and a malformed phrase (``eyewitnesses to a revolution''). LexRank, by contrast, copies actual article sentences and remains factually faithful. This is the canonical \emph{abstractive hallucination} failure mode.
+
+\textbf{Example 2 -- coverage vs.\ fluency.} An article on a Memphis child posting gang-life content on Twitter. LexRank copies four full sentences from the article, retaining factual accuracy at the cost of length and flow. BART produces a more compact, fluent summary that includes a paraphrased subset of the tweets. Here, the better choice depends on user need: fidelity (LexRank) versus readability (BART).
+
+\textbf{Example 3 -- factual addition.} An article on Governor Christie's town hall debate. BART includes the figure ``\$225 million'' for the ExxonMobil settlement -- a number not present in the reference summary. Whether this is a factual addition (helpful) or a hallucination (harmful) depends on whether the figure appears verbatim in the source article (we did not verify each token).
+
+\subsection{Discussion}
+
+The results illustrate three trade-offs:
+
+\textit{Quality vs.\ cost.} BART runs $\sim$22$\times$ slower than LexRank (190.2s vs.\ 8.8s for 100 articles, both on T4). For high-throughput pipelines (e.g., real-time news summarization at scale), this gap is substantial.
+
+\textit{Fluency vs.\ faithfulness.} BART produces grammatically smoother, more compressed summaries, but is susceptible to hallucination (Example 1). LexRank cannot hallucinate by construction (it can only copy), making it the safer choice when factual fidelity is critical (e.g., medical, legal).
+
+\textit{Metric coverage.} BERTScore-F1 detects only a 1.9-point gap between the two methods, whereas ROUGE-2 detects an 8.0-point gap. BERTScore is largely insensitive to phrasing differences when the underlying semantic content is similar -- this is a feature for paraphrase tolerance, but a limitation for evaluating faithfulness, since hallucinated content with similar embeddings can score highly. \emph{No single metric should be relied on alone.}
+
+% ===========================================================
+% ===== Q4: Machine Translation =====
+% ===========================================================
+\section{Q4: Machine Translation}
+
+\subsection{Problem Formulation and Dataset}
+
+We study English $\to$ German translation on the Multi30k dataset, an extension of Flickr30k where each image caption is paired with a German translation. Splits: 29{,}000 train / 1{,}014 valid / 1{,}000 test (\texttt{test\_2016\_flickr}). The data is loaded from the \texttt{bentrevett/multi30k} HuggingFace mirror, which contains the canonical Multi30k Task 1 splits in parquet format.
+
+\subsection{Models}
+
+\textbf{Seq2Seq with Bahdanau Attention (custom, trained from scratch).} A standard encoder-decoder with attention:
+\vspace{-0.3em}
+\begin{itemize}[noitemsep,leftmargin=1.4em]
+    \item \emph{Encoder}: 128-dim trainable English embeddings $\to$ bidirectional GRU with 256 hidden units (each direction). The final hidden state is projected through $\tanh$ into a single 256-dim vector that initializes the decoder.
+    \item \emph{Attention}: additive (Bahdanau) attention -- the decoder state attends over all encoder outputs via a learned MLP scoring function.
+    \item \emph{Decoder}: 128-dim trainable German embeddings; at each step, the decoder consumes the previous token, the attention context, and the previous hidden state, and emits a softmax over the German vocabulary.
+\end{itemize}
+\vspace{-0.3em}
+The model has separate English and German vocabularies (frequency-pruned at min freq 2, capped at 10K each) with \texttt{<sos>}, \texttt{<eos>}, \texttt{<pad>}, \texttt{<unk>} special tokens. Trained 8 epochs with Adam (lr=$10^{-3}$), batch size 64, teacher-forcing ratio 0.5, gradient clipping at 1.0.
+
+\textbf{Helsinki-NLP/opus-mt-en-de (pre-trained Transformer).} The OPUS-MT model is a Transformer encoder-decoder trained on the OPUS multilingual corpus. We use it for inference only (beam search with 4 beams, max length 128, early stopping). \emph{No fine-tuning.}
+
+\subsection{Evaluation Metrics}
+
+We use a four-metric suite emphasizing the morphological richness of German:
+\vspace{-0.3em}
+\begin{itemize}[noitemsep,leftmargin=1.4em]
+    \item \textbf{BLEU} (\texttt{sacrebleu}) -- corpus-level n-gram precision with brevity penalty.
+    \item \textbf{METEOR} (NLTK) -- alignment-based with synonymy and stemming.
+    \item \textbf{ChrF} (\texttt{sacrebleu}) -- character n-gram F-score; particularly informative for German, which inflects and compounds heavily.
+    \item \textbf{BERTScore-F1} (\texttt{lang=de}) -- multilingual BERT semantic similarity.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Multi30k EN$\to$DE translation results.}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Model} & \textbf{BLEU} & \textbf{METEOR} & \textbf{ChrF} & \textbf{BERTScore-F1} & \textbf{Time (s)}\\
+\midrule
+Seq2Seq + Attention (from scratch)        & 0.0438 & 0.5495 & 0.4102 & 0.7603 & 395.6\\
+\textbf{Transformer (opus-mt, pre-trained)} & \textbf{0.3637} & \textbf{0.6655} & \textbf{0.6423} & \textbf{0.8970} & 16.2\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Qualitative Analysis}
+
+\textbf{Example 1.} \\
+SRC: \textit{A man in an orange hat starring at something.}\\
+REF: \textit{Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.}\\
+SEQ2SEQ: \textit{ein mann mit einem orangen hut auf etwas .}\\
+TRANSFORMER: \textit{Ein Mann in einem orangenen Hut, mit etwas.}
+
+Both models capture the core noun phrase. Seq2Seq omits the relative clause ``der etwas anstarrt'' (\textit{who is staring at something}) entirely; the Transformer also drops the staring action but produces grammatical German.
+
+\textbf{Example 2 -- OOV failure.}\\
+SRC: \textit{A Boston Terrier is running on lush green grass in front of a white fence.}\\
+REF: \textit{Ein Boston Terrier l\"auft \"uber saftig-gr\"unes Gras vor einem wei{\ss}en Zaun.}\\
+SEQ2SEQ: \textit{ein \texttt{<unk>} l\"auft auf dem \texttt{<unk>} vor einem wei{\ss}en zaun .}\\
+TRANSFORMER: \textit{Ein Boston Terrier l\"auft auf \"uppig gr\"unem Gras vor einem wei{\ss}en Zaun.}
+
+The Seq2Seq model emits \texttt{<unk>} for ``Boston Terrier'' and ``lush green grass'' because these tokens fall outside its frequency-pruned 10K vocabulary. The Transformer's SentencePiece subword tokenizer has no such vocabulary cliff and translates everything correctly. This is the canonical advantage of subword tokenization for low-resource MT.
+
+\textbf{Example 3 -- collapse to repetition.}\\
+SRC: \textit{A girl in karate uniform breaking a stick with a front kick.}\\
+REF: \textit{Ein M\"adchen in einem Karateanzug bricht ein Brett mit einem Tritt.}\\
+SEQ2SEQ: \textit{ein m\"adchen gekleidetes m\"adchen macht einen einen mit mit einem fu{\ss}tritt tritt .}\\
+TRANSFORMER: \textit{Ein M\"adchen in Karate-Uniform bricht einen Stock mit einem Front-Kick.}
+
+The Seq2Seq output exhibits autoregressive degeneration -- repeated tokens (``einen einen'', ``mit mit'', ``tritt'' appearing twice). This is a known pathology of small Seq2Seq models lacking sufficient capacity or regularization. The Transformer produces a near-reference-quality translation.
+
+\subsection{Discussion}
+
+The metric profile is highly informative.
+
+\textit{BLEU is harshest on Seq2Seq.} BLEU rewards exact n-gram matches; the Seq2Seq model -- with its small vocabulary, frequent \texttt{<unk>} tokens, and reordering errors -- collects almost no credit (0.04). The Transformer benefits from a far larger vocabulary and pre-training (0.36).
+
+\textit{METEOR is more forgiving.} METEOR's synonym/stem matching gives the Seq2Seq partial credit for near-misses. The gap between the two models on METEOR (0.55 vs.\ 0.67) is much smaller than on BLEU.
+
+\textit{ChrF rewards morphology.} German's compounding and inflection mean character-level overlap is more informative than word-level overlap. ChrF places the Transformer 23 points above Seq2Seq -- consistent with BLEU's ranking but at higher absolute values.
+
+\textit{BERTScore reveals semantic similarity.} Even when the surface forms diverge greatly, the Seq2Seq output remains semantically related to the reference (BERTScore 0.76 vs.\ 0.90 for the Transformer). The 14-point gap reflects the Transformer's fluency advantage in addition to lexical correctness.
+
+\textit{Architecture trade-offs.} Our small Seq2Seq is trained from scratch on 29K sentence pairs in $\sim$6.5 minutes; the pre-trained Transformer is much larger and was trained for orders of magnitude more data and compute. The comparison therefore reflects the value of pre-training as much as the choice of architecture. A from-scratch Transformer of similar size to our Seq2Seq would likely fall between these two -- subword tokenization alone would close most of the OOV gap (Example 2).
+
+% ===========================================================
+% ===== Q5: Language Modeling =====
+% ===========================================================
+\section{Q5: Language Modeling}
+
+\subsection{Problem Formulation and Dataset}
+
+We compare a classical n-gram model and an LSTM-based neural language model on the WikiText-2 raw corpus, a curated Wikipedia benchmark that retains original case, punctuation, and numbers (in contrast to Penn Treebank's heavily preprocessed form). The dataset is loaded from \texttt{Salesforce/wikitext} (\texttt{wikitext-2-raw-v1}). Sentences are obtained by line-splitting and lowercased whitespace tokenization.
+
+\subsection{Models}
+
+\textbf{Trigram with Laplace Smoothing.} We use NLTK's \texttt{Laplace} (add-1 smoothed) trigram language model, fitted via the standard \texttt{padded\_everygram\_pipeline}. \emph{Note on smoothing choice:} we initially attempted Kneser-Ney interpolated smoothing (NLTK's \texttt{KneserNeyInterpolated}); however, the pure-Python implementation proved computationally prohibitive on the WikiText-2 training set within the Colab Free runtime. We therefore use Laplace smoothing as a tractable alternative, with the understanding that the n-gram model serves here as a baseline against which neural models are compared, not as a state-of-the-art benchmark in itself. Trained on a 10{,}000-sentence subset of the WikiText-2 training split.
+
+\textbf{LSTM Language Model.} A 2-layer LSTM with 128-dim trainable embeddings, 256 hidden units per layer, and 0.3 dropout on inputs, between layers, and on outputs. We follow the standard truncated-BPTT training recipe: concatenate all training sentences (with \texttt{<bos>}/\texttt{<eos>} markers) into one long stream, partition into 32 parallel streams (batch dimension), and train on contiguous BPTT-length windows (BPTT=25). Trained 3 epochs with Adam (lr=$10^{-3}$), gradient clipping at 0.5. Vocabulary capped at 20K (min freq 2). Trained on an 8{,}000-sentence subset to fit Colab's runtime budget.
+
+\subsection{Results}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{WikiText-2 language modeling results.}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & \textbf{Test Perplexity} & \textbf{Train Time (s)}\\
+\midrule
+Trigram (Laplace, add-1)        & 19{,}820.30 & 12.2\\
+\textbf{LSTM-LM (2-layer, 256H)} & \textbf{272.07} & 39.0\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The LSTM-LM achieves a perplexity that is roughly $73\times$ lower than the smoothed trigram. Both numbers are higher in absolute terms than the literature standard for full-corpus, fully-trained models on WikiText-2 (e.g., Merity et al.\ 2018 report $\sim$66 perplexity for AWD-LSTM with extensive tuning), reflecting our subset and runtime constraints. The \emph{relative} gap between count-based and neural models, however, is consistent with the literature.
+
+\subsection{Discussion}
+
+\textit{Why is the trigram so weak?} Laplace smoothing is provably suboptimal: it assigns identical probability mass to every unseen trigram regardless of its constituent unigrams or bigrams. On WikiText-2, with a vocabulary of $\sim$33K types and a long tail of rare words, the vast majority of trigrams encountered at test time were not seen during training, and Laplace simply returns a uniform-ish small probability for all of them, yielding extremely high perplexity. Kneser-Ney's continuation probabilities (which we could not run within budget) are designed precisely to address this; the gap between Laplace and Kneser-Ney on this dataset is typically large (often more than $10\times$).
+
+\textit{Why is the LSTM-LM strong?} The LSTM learns dense distributed word representations that generalize across rare contexts: rather than treating every unseen trigram as equally surprising, it estimates likelihood using continuous similarities to seen contexts. This is the canonical advantage of neural over count-based language modeling.
+
+\textit{Trade-offs.} The trigram trains in 12 seconds on CPU and uses essentially no GPU memory; the LSTM requires GPU and an order of magnitude more training time. For perplexity-driven applications the LSTM is dominant; for very fast on-device inference with no parameter budget, smoothed n-grams remain useful.
+
+% ===========================================================
+% ===== Conclusion =====
+% ===========================================================
+\section{Conclusions}
+
+Across all five tasks, the same overarching pattern emerges: \emph{contextual representations from large pre-trained models consistently outperform classical and shallow neural baselines, often by a wide margin.} However, the magnitude of the gap and the metric-specific behavior reveal task-dependent nuances:
+
+\vspace{-0.3em}
+\begin{itemize}[noitemsep,leftmargin=1.4em]
+    \item \textbf{Q1 (classification):} DistilBERT improves macro-F1 by $\sim$9 points over both TF-IDF and BiLSTM, but the gap between TF-IDF and BiLSTM is small ($\leq 1$ point), indicating that for short, lexically-driven texts a strong sparse baseline is hard to beat without contextual pretraining.
+    \item \textbf{Q2 (NER):} DistilBERT-NER beats BiLSTM-CRF by $\sim$25 F1 points even with only 5K training sentences, demonstrating strong sample efficiency from pre-training. MISC remains the hardest entity type.
+    \item \textbf{Q3 (summarization):} BART improves all metrics over LexRank, but is $\sim$22$\times$ slower and is susceptible to factual hallucination -- our Example 1 shows BART inventing a non-existent author. Extractive methods remain valuable when fidelity is paramount.
+    \item \textbf{Q4 (translation):} OPUS-MT outperforms our from-scratch Seq2Seq dramatically, with the largest gap on BLEU (+0.32). BLEU vs.\ METEOR vs.\ ChrF vs.\ BERTScore reveal genuinely different aspects of translation quality, and no single metric tells the whole story.
+    \item \textbf{Q5 (language modeling):} The LSTM-LM achieves $\sim$73$\times$ lower perplexity than a Laplace-smoothed trigram, illustrating the value of dense neural representations for sequence likelihood modeling.
+\end{itemize}
+\vspace{-0.3em}
+
+A second, more nuanced finding is that \emph{evaluation metric choice matters as much as model choice}. Q3's BERTScore vs.\ ROUGE-2 gap, Q4's BLEU vs.\ METEOR gap, and the documented hallucination in BART's Example 1 all point to the same lesson: surface-overlap metrics, semantic-similarity metrics, and faithfulness checks measure complementary properties, and rigorous NLG evaluation requires reporting all of them.
+
+% ===========================================================
+% ===== References =====
+% ===========================================================
+\section*{References}
+
+\small
+\begin{enumerate}[noitemsep,leftmargin=1.4em]
+    \item Devlin, J.\ et al.\ ``BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding.'' \emph{NAACL}, 2019.
+    \item Sanh, V.\ et al.\ ``DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter.'' \emph{NeurIPS Workshop on Energy Efficient ML}, 2019.
+    \item Lewis, M.\ et al.\ ``BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension.'' \emph{ACL}, 2020.
+    \item Tiedemann, J.\ and Thottingal, S.\ ``OPUS-MT: Building open translation services for the World.'' \emph{EAMT}, 2020.
+    \item Erkan, G.\ and Radev, D.\ ``LexRank: Graph-based Lexical Centrality as Salience in Text Summarization.'' \emph{JAIR}, 2004.
+    \item Bahdanau, D.\ et al.\ ``Neural Machine Translation by Jointly Learning to Align and Translate.'' \emph{ICLR}, 2015.
+    \item Merity, S.\ et al.\ ``Regularizing and Optimizing LSTM Language Models.'' \emph{ICLR}, 2018.
+    \item Tjong Kim Sang, E.F.\ and De Meulder, F.\ ``Introduction to the CoNLL-2003 Shared Task: Language-Independent Named Entity Recognition.'' \emph{CoNLL}, 2003.
+    \item Socher, R.\ et al.\ ``Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank.'' \emph{EMNLP}, 2013.
+    \item Hermann, K.M.\ et al.\ ``Teaching Machines to Read and Comprehend.'' \emph{NeurIPS}, 2015. (CNN/DailyMail).
+    \item Elliott, D.\ et al.\ ``Multi30K: Multilingual English-German Image Descriptions.'' \emph{Workshop on Vision and Language}, 2016.
+    \item Lin, C.-Y.\ ``ROUGE: A Package for Automatic Evaluation of Summaries.'' \emph{ACL Workshop}, 2004.
+    \item Banerjee, S.\ and Lavie, A.\ ``METEOR: An Automatic Metric for MT Evaluation with Improved Correlation with Human Judgments.'' \emph{ACL Workshop}, 2005.
+    \item Popovi\'c, M.\ ``chrF: character n-gram F-score for automatic MT evaluation.'' \emph{WMT}, 2015.
+    \item Zhang, T.\ et al.\ ``BERTScore: Evaluating Text Generation with BERT.'' \emph{ICLR}, 2020.
+\end{enumerate}
+
+\end{document}
